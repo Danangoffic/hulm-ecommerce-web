@@ -1,0 +1,147 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  # Allow manual trigger for rollbacks / hotfixes
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "production"
+        type: choice
+        options: [production, staging]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false   # Never cancel an in-flight deploy
+
+env:
+  NODE_VERSION: "22"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}/hulm-backend
+
+jobs:
+  # ─────────────────────────────────────────────
+  # 1. Deploy frontend to Vercel
+  # ─────────────────────────────────────────────
+  deploy-frontend:
+    name: Deploy Frontend → Vercel
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel environment
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build for Vercel
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to Vercel (production)
+        id: vercel-deploy
+        run: |
+          url=$(vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "deployment_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Comment deployment URL
+        if: github.event_name == 'push'
+        run: echo "Deployed to ${{ steps.vercel-deploy.outputs.deployment_url }}"
+
+  # ─────────────────────────────────────────────
+  # 2. Build & push Docker image for backend
+  #    (Activate when /backend directory exists)
+  # ─────────────────────────────────────────────
+  build-backend-image:
+    name: Build Backend Docker Image
+    runs-on: ubuntu-latest
+    # Remove the `if: false` line when a /backend directory is added
+    if: false
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────
+  # 3. Deploy backend to AWS EC2
+  #    (Activate when /backend directory exists)
+  # ─────────────────────────────────────────────
+  deploy-backend:
+    name: Deploy Backend → EC2
+    runs-on: ubuntu-latest
+    needs: build-backend-image
+    if: false   # Remove when /backend is ready
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}
+          script: |
+            set -e
+            cd /opt/hulm-backend
+
+            # Pull latest image
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ${{ needs.build-backend-image.outputs.image_tag }}
+
+            # Rolling restart with zero-downtime
+            docker compose pull
+            docker compose up -d --no-deps --remove-orphans backend
+
+            # Health check
+            sleep 10
+            curl -f http://localhost:3001/health || (docker compose logs backend && exit 1)
+
+            # Prune old images
+            docker image prune -f

@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Frontend (Next.js) — lint, test, build
+  # ─────────────────────────────────────────────
+  frontend:
+    name: Frontend — lint / test / build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      # Restore Next.js build cache (see: node_modules/next/dist/docs/01-app/02-guides/ci-build-caching.md)
+      - name: Restore Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            ${{ github.workspace }}/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('**/*.js', '**/*.jsx', '**/*.ts', '**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json') }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        env:
+          # Minimal env vars required by tests (see tests/setup.ts)
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci-test-secret-that-is-long-enough-for-testing' }}
+          JWT_EXPIRES_IN: "1h"
+          NODE_ENV: test
+          # Supabase — use dummy values for unit/integration tests that don't hit the DB
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'placeholder-key' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/hulm_test' }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL || 'postgresql://postgres:postgres@localhost:5432/hulm_test' }}
+        run: npm run test
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+      - name: Build
+        env:
+          # Build-time env vars (NEXT_PUBLIC_ vars are inlined at build time)
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_EXPIRES_IN: ${{ secrets.JWT_EXPIRES_IN || '7d' }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
+          NEW_RELIC_APP_NAME: ${{ secrets.NEW_RELIC_APP_NAME || 'hulm-ecommerce' }}
+        run: npm run build
+
+  # ─────────────────────────────────────────────
+  # Backend placeholder job
+  # When a dedicated Express backend is added under /backend,
+  # uncomment and adapt this job.
+  # ─────────────────────────────────────────────
+  # backend:
+  #   name: Backend — lint / test
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: backend
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: ${{ env.NODE_VERSION }}
+  #         cache: "npm"
+  #         cache-dependency-path: backend/package-lock.json
+  #     - run: npm ci
+  #     - run: npm run lint --if-present
+  #     - run: npm test
