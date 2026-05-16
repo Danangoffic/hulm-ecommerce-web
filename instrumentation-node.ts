@@ -37,3 +37,5 @@ if (process.env.SENTRY_DSN) {
 } else {
   console.warn("[instrumentation] SENTRY_DSN not set — Sentry disabled");
 }
+
+export {};
