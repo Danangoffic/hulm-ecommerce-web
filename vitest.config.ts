@@ -9,7 +9,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],
-      include: ["lib/auth/**", "app/api/auth/**"],
+      include: ["lib/auth/**", "app/api/auth/**", "lib/products/**", "app/api/products/**", "lib/orders/**", "app/api/orders/**"],
     },
   },
   resolve: {

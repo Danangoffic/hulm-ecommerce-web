@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -28,6 +28,7 @@ model categories {
   id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name       String
   slug       String     @unique(map: "categories_slug_unique")
+  image_url  String?
   created_at DateTime   @default(now()) @db.Timestamptz(6)
   updated_at DateTime   @default(now()) @db.Timestamptz(6)
   products   products[]
@@ -137,17 +138,22 @@ model payments {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model product_images {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  product_id String   @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  product_id String    @db.Uuid
   image_url  String
   alt_text   String?
-  sort_order Int      @default(0)
-  created_at DateTime @default(now()) @db.Timestamptz(6)
-  updated_at DateTime @default(now()) @db.Timestamptz(6)
-  products   products @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sort_order Int       @default(0)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime  @default(now()) @db.Timestamptz(6)
+  created_by String?   @db.Uuid
+  updated_by String?   @db.Uuid
+  deleted_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz(6)
+  products   products  @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([product_id], map: "idx_product_images_product_id")
   @@index([product_id, sort_order], map: "idx_product_images_product_sort")
+  @@index([deleted_at], map: "idx_product_images_deleted_at")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -183,6 +189,10 @@ model products {
   is_active        Boolean            @default(true)
   created_at       DateTime           @default(now()) @db.Timestamptz(6)
   updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  created_by       String?            @db.Uuid
+  updated_by       String?            @db.Uuid
+  deleted_by       String?            @db.Uuid
+  deleted_at       DateTime?          @db.Timestamptz(6)
   order_items      order_items[]
   product_images   product_images[]
   product_variants product_variants[]
@@ -192,6 +202,7 @@ model products {
   @@index([category_id], map: "idx_products_category_id")
   @@index([is_active], map: "idx_products_is_active")
   @@index([status], map: "idx_products_status")
+  @@index([deleted_at], map: "idx_products_deleted_at")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
